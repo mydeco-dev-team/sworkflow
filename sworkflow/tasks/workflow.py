@@ -1,7 +1,5 @@
 """
-Workflow Task
-
-The workflow it's itself a Task. 
+A simple workflow engine
 """
 import logging
 from collections import defaultdict
@@ -11,12 +9,34 @@ from string import Template
 from .task import Task
 
 
-class CancelWorkflow(Exception):
-    """Signals the cancelation of workflow without failure"""
+class ExitWorkflow(Exception):
+    """Exit the execution of a workflow earlier"""
 
-# Special exit status to be used by spawned programs to stop workflow
-# EX_TEMPFAIL according to /usr/include/sysexits.h
-CANCELWORKFLOW = 75
+    # Special exit status to be used by spawned programs to stop workflow
+    # not in sysexits.h, just to say that we require the process to stop
+    EXIT_STOPPED = 90
+    # EX_SOFTWARE according to /usr/include/sysexits.h
+    EXIT_FAILED = 70
+    # EX_TEMPFAIL according to /usr/include/sysexits.h
+    EXIT_CANCELLED = 75
+
+    status_messages = {
+        EXIT_STOPPED: "EXIT: STOPPED",
+        EXIT_FAILED: "EXIT: FAILED",
+        EXIT_CANCELLED: "EXIT: CANCELLED"
+    }
+
+    def __init__(self, task, status, message=None):
+        self.task = task
+        self.status = status
+        Exception.__init__(self, message)
+
+    @classmethod
+    def is_status(cls, status):
+        return status in cls.status_messages
+
+    def get_exit_message(self):
+        return self.status_messages.get(self.status, "")
 
 
 class Workflow(Task):
@@ -72,8 +92,19 @@ class Workflow(Task):
         self.log('Workflow started')
         try:
             self._execute()
-        except CancelWorkflow, exc:
-            self.log('Workflow cancelled in %s: %s', datetime.now() - starttime, exc)
+        except ExitWorkflow, exc:
+            tmsg = "Task %s stopped the workflow with exit status '%s' in %s"
+            msg = tmsg % (exc.task, exc.get_exit_message(),
+                    datetime.now() - starttime)
+            if exc.status == ExitWorkflow.EXIT_STOPPED:
+                self.log('Workflow stopped: %s' % msg)
+            elif exc.status == ExitWorkflow.EXIT_CANCELLED:
+                self.log('Workflow cancelled: %s' % msg)
+            elif exc.status == ExitWorkflow.EXIT_FAILED:
+                self.log('Workflow failed: %s' % msg)
+                raise
+            else:
+                raise
         except Exception:
             self.log('Workflow failed in %s', \
                     datetime.now() - starttime, level=logging.ERROR)
@@ -170,7 +201,11 @@ def _texpand(task, settings):
         v = getattr(task, attr)
         if not callable(v):
             nv = _titem(v, settings)
-            setattr(task, attr, nv)
+            try:
+                setattr(task, attr, nv)
+            except AttributeError:
+                # it may happen that the attribute is a property
+                pass
 
 def _tsettings(settings):
     """Returns expanded settings

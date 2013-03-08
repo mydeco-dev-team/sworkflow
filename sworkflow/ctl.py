@@ -78,7 +78,7 @@ def cmdline(controller):
 
     cmd = args[0]
     workflow = None
-    if cmd in ('run', 'list-tasks', 'draw', 'lint'): # need workflow name
+    if cmd in ('run', 'list-tasks', 'draw', 'lint', 'list-settings',): # need workflow name
         try:
             name = args[1]
         except IndexError:
@@ -98,9 +98,17 @@ def cmdline(controller):
         for i, task, skipped in workflow.tasks:
             task_id = taskid(task)
             print " %3d | %-38s | %-9s | %s" % (i, task_id, skipped, task)
+        print "-"*80
     elif cmd == 'lint':
         draw_workflow(workflow, name, filename=opts.output, remove_dependencies=False)
     elif cmd == 'draw':
         draw_workflow(workflow, name, filename=opts.output)
+    elif cmd == 'list-settings':
+        print "| %s | %s |" % ("setting name".ljust(28), "default".ljust(45))
+        print "-"*80
+        settings = workflow.settings or {}
+        for name, default in settings.items():
+            print "| %s | %s |" % (name.ljust(28), default.ljust(45),)
+        print "-"*80
     else:
         parser.error("'%s' is not a valid command" % cmd)

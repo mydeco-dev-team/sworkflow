@@ -2,7 +2,7 @@ import sys
 from subprocess import check_call, CalledProcessError
 
 from .task import Task
-from .workflow import CancelWorkflow, CANCELWORKFLOW
+from .workflow import ExitWorkflow
 
 
 class PythonTask(Task):
@@ -15,15 +15,18 @@ class PythonTask(Task):
     execargs = ()
     execenv = None
     execcwd = None
-    cancelworkflow_retcode = CANCELWORKFLOW
+    cancelworkflow_retcode = ExitWorkflow.EXIT_CANCELLED
 
-    def execute(self):
+    def _run(self):
         assert self.execargs, 'missing execargs'
         args = (self.python_interpreter, '-m') + tuple(self.execargs)
         self.log('Running %s', ' '.join(args))
+        check_call(args, env=self.execenv, cwd=self.execcwd)
+
+    def execute(self):
         try:
-            check_call(args, env=self.execenv, cwd=self.execcwd)
+            self._run()
         except CalledProcessError, exc:
-            if exc.returncode == self.cancelworkflow_retcode:
-                raise CancelWorkflow()
+            if ExitWorkflow.is_status(exc.returncode):
+                raise ExitWorkflow(str(self), exc.returncode)
             raise

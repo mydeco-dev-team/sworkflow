@@ -1,6 +1,6 @@
 from unittest import TestCase
-from sworkflow.tasks import Task
-from sworkflow.tasks.workflow import Workflow, walk, CancelWorkflow
+from sworkflow.tasks import Task, PythonTask
+from sworkflow.tasks.workflow import Workflow, walk, ExitWorkflow
 
 class TaskTestCase(TestCase):
 
@@ -163,10 +163,10 @@ class WorkflowTestCase(TestCase):
         wf = Workflow(starttask=Workflow(starttask=FailTask()))
         self.assertRaises(TaskFailed, wf.execute)
 
-    def test_cancelworkflow(self):
-        class FailTask(self.MockTask):
+    def test_exitworkflow(self):
+        class FailTask(Task):
             def execute(self):
-                raise CancelWorkflow
+                raise ExitWorkflow('FailTask', ExitWorkflow.EXIT_CANCELLED)
 
         wf = Workflow(starttask=FailTask())
         wf.execute()
@@ -175,9 +175,51 @@ class WorkflowTestCase(TestCase):
         wf = Workflow(starttask=Workflow(starttask=FailTask()))
         wf.execute()
 
+        def create_mock(status):
+            class MockExitTask(Task):
+                def execute(self):
+                    raise ExitWorkflow('MockExitTask', status)
+            return MockExitTask
+        # doesn't fail, and finish OK
+        wf = Workflow(starttask=create_mock(ExitWorkflow.EXIT_STOPPED))
+        wf.execute()
+
+        # will fail throwing ExitWorkflow exception
+        wf = Workflow(starttask=create_mock(ExitWorkflow.EXIT_FAILED))
+        self.assertRaises(ExitWorkflow, wf.execute)
+
+    def test_exitworkflow_pythontask(self):
+        from subprocess import check_call, CalledProcessError
+        def create_mock(status):
+            class MockPyTask(PythonTask):
+                execargs = []
+                def _run(self):
+                    check_call(['sh', '-c', 'exit %s' % str(status)])
+            return MockPyTask()
+
+        # Raises EXIT_STOPPED
+        self.assertRaises(ExitWorkflow, create_mock(ExitWorkflow.EXIT_STOPPED).execute)
+
+        # Raises ExitWorkflow with EXIT_CANCELLED status
+        self.assertRaises(ExitWorkflow, create_mock(ExitWorkflow.EXIT_CANCELLED).execute)
+
+        # Raises a ExitWorkflow with EXIT_FAILED status
+        self.assertRaises(ExitWorkflow, create_mock(ExitWorkflow.EXIT_FAILED).execute)
+
+        # Other not registered error, will raise CalledProcessError
+        self.assertRaises(CalledProcessError, create_mock(255).execute)
+
+
+
     def test_template_expansion(self):
         # settings and task attributes must be expanded on execute
-        task = Task(foo='$foo-$xta', bar='$bar')
+        class MyTask(Task):
+            foo = 'foo'
+            bar = 'bar'
+            @property
+            def execargs(self):
+                return [self.foo, self.bar]
+        task = MyTask(foo='$foo-$xta', bar='$bar')
         class MyWorkflow(Workflow):
             starttask = task
             settings = dict(xta='xta$foo')
@@ -194,3 +236,4 @@ class WorkflowTestCase(TestCase):
         self.assertEqual(wf.settings, {'foo': 'cof', 'bar': 'bar$foo', 'xta': 'xta$foo'})
         self.assertEqual(task.foo, 'cof-xtacof')
         self.assertEqual(task.bar, 'barcof')
+        self.assertEqual(task.execargs, ['cof-xtacof', 'barcof'])
